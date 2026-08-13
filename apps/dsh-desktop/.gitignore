@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+dist/
+release/
+build/
+
+# Build outputs
+apps/cli/lib/
+apps/cli/dist/
+
+# Session data
+.sessions/
+sessions/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Electron logs
+*.log
+
+# TypeScript cache
+.tsbuildinfo
+
+# Generated files
+*.tsbuildinfo
