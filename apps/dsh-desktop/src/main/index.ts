@@ -16,14 +16,11 @@ let settings: { [k: string]: unknown } = {}
 
 function getIconPath(): string {
   const ext = isWin ? '.ico' : (isMac ? '.icns' : '.png')
-  const file = 'icon' + ext
-  const devPath = path.join(__dirname, '../../build/' + file)
-  const prodPath = path.join(process.resourcesPath, file)
-  return prodPath
+  return path.join(process.resourcesPath, 'icon' + ext)
 }
 
 function createWindow(): BrowserWindow {
-  const options: Electron.BrowserWindowConstructorOptions = {
+  const base: Electron.BrowserWindowConstructorOptions = {
     width: 1400,
     height: 900,
     minWidth: 900,
@@ -39,31 +36,28 @@ function createWindow(): BrowserWindow {
   }
 
   if (isMac) {
-    Object.assign(options, {
-      frame: false,
+    Object.assign(base, {
+      frame: true,
       titleBarStyle: 'hiddenInset' as const,
       trafficLightPosition: { x: 16, y: 14 },
     })
   } else if (isWin) {
-    Object.assign(options, {
-      frame: false,
+    Object.assign(base, {
+      frame: true,
       titleBarStyle: 'hidden' as const,
       icon: getIconPath(),
     })
   } else {
-    Object.assign(options, {
-      frame: false,
+    Object.assign(base, {
+      frame: true,
       icon: getIconPath(),
     })
   }
 
-  const win = new BrowserWindow(options)
+  const win = new BrowserWindow(base)
 
-  if (isDev) {
-    win.loadURL('http://localhost:5173')
-  } else {
-    win.loadURL('file://' + path.join(__dirname, '../renderer/dist/index.html'))
-  }
+  if (isDev) win.loadURL('http://localhost:5173')
+  else win.loadURL('file://' + path.join(__dirname, '../renderer/dist/index.html'))
 
   if (isDev) win.webContents.openDevTools()
   win.once('ready-to-show', () => win.show())
@@ -102,7 +96,10 @@ app.whenReady().then(async () => {
   tray = createTray(win)
   registerIPC(mainWindow!, runtime, settings as any)
 
-  // macOS: app menu is in the global menu bar
+  ipcMain.on('win:minimize', () => { win?.minimize() })
+  ipcMain.on('win:toggle-maximize', () => { win?.isMaximized() ? win?.unmaximize() : win?.maximize() })
+  ipcMain.on('win:close', () => { void quit() })
+
   if (isMac) {
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       {
@@ -134,7 +131,6 @@ app.whenReady().then(async () => {
       },
     ]))
   } else {
-    // Win/Linux: app menu inside the window
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       {
         label: 'File',
@@ -154,9 +150,9 @@ app.whenReady().then(async () => {
           { role: 'toggleDevTools' },
           { type: 'separator' },
           { label: 'Toggle Sidebar', accelerator: 'Ctrl+B', click: () => win.webContents.send('toggle-sidebar') },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
-          { role: 'resetZoom' },
+          { label: 'Zoom In', accelerator: 'Ctrl+=', click: () => win.webContents.executeJavaScript('document.body.style.zoom = (parseFloat(document.body.style.zoom) || 1) + 0.1') },
+          { label: 'Zoom Out', accelerator: 'Ctrl+-', click: () => win.webContents.executeJavaScript('document.body.style.zoom = Math.max(0.5, (parseFloat(document.body.style.zoom) || 1) - 0.1)') },
+          { label: 'Reset Zoom', accelerator: 'Ctrl+0', click: () => win.webContents.executeJavaScript('document.body.style.zoom = 1') },
         ],
       },
       {
@@ -171,9 +167,5 @@ app.whenReady().then(async () => {
   if (isMac) app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
 })
 
-app.on('window-all-closed', () => {
-  // macOS: app stays alive until explicitly quit
-  if (!isMac) void quit()
-})
-
+app.on('window-all-closed', () => { if (!isMac) void quit() })
 app.on('before-quit', async () => { await runtime?.shutdown() })

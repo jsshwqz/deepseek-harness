@@ -888,3 +888,80 @@ input, textarea {
 
 /* Settings select styling */
 .settings-select { cursor: pointer; }
+
+/* === Window resize handles (frameless support) === */
+.resize-handle {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: auto;
+  background: transparent;
+}
+.resize-handle.n { top: 0; left: 0; right: 0; height: 6px; cursor: n-resize; }
+.resize-handle.s { bottom: 0; left: 0; right: 0; height: 6px; cursor: s-resize; }
+.resize-handle.e { top: 0; right: 0; bottom: 0; width: 6px; cursor: e-resize; }
+.resize-handle.w { top: 0; left: 0; bottom: 0; width: 6px; cursor: w-resize; }
+.resize-handle.ne { top: 0; right: 0; width: 14px; height: 14px; cursor: ne-resize; }
+.resize-handle.nw { top: 0; left: 0; width: 14px; height: 14px; cursor: nw-resize; }
+.resize-handle.se { bottom: 0; right: 0; width: 14px; height: 14px; cursor: se-resize; }
+.resize-handle.sw { bottom: 0; left: 0; width: 14px; height: 14px; cursor: sw-resize; }
+
+/* === Selection quote popup === */
+.quote-popup {
+  position: fixed;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 11px;
+  animation: fadeIn 0.15s ease-out;
+}
+.quote-popup button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all var(--transition);
+}
+.quote-popup button:hover { background: var(--accent-hover); }
+.quote-popup .quote-text { color: var(--text-muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* === Reference marker in composer === */
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  margin: 2px 2px 2px 0;
+  border-radius: 3px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  font-size: 11px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+.ref-chip .ref-text { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-chip .ref-close { cursor: pointer; font-size: 12px; opacity: 0.7; }
+.ref-chip .ref-close:hover { opacity: 1; }
+
+/* Ensure text selection is enabled */
+.message-body { user-select: text; }
+
+.ref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
