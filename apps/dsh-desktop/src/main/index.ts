@@ -1,33 +1,63 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, dialog } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, dialog, shell } from 'electron'
 import path from 'node:path'
 import { registerIPC } from './ipc.js'
 import { RuntimeManager } from './runtime.js'
 import { createSettingsStore } from './settings.js'
 
 const isDev = !app.isPackaged
+const isMac = process.platform === 'darwin'
+const isWin = process.platform === 'win32'
+const isLinux = process.platform === 'linux'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let runtime: RuntimeManager | null = null
 let settings: { [k: string]: unknown } = {}
 
+function getIconPath(): string {
+  const ext = isWin ? '.ico' : (isMac ? '.icns' : '.png')
+  const file = 'icon' + ext
+  const devPath = path.join(__dirname, '../../build/' + file)
+  const prodPath = path.join(process.resourcesPath, file)
+  return prodPath
+}
+
 function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({
+  const options: Electron.BrowserWindowConstructorOptions = {
     width: 1400,
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    frame: false,
-    titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 16, y: 14 },
     backgroundColor: '#0a0e14',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
-  })
+  }
+
+  if (isMac) {
+    Object.assign(options, {
+      frame: false,
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 16, y: 14 },
+    })
+  } else if (isWin) {
+    Object.assign(options, {
+      frame: false,
+      titleBarStyle: 'hidden' as const,
+      icon: getIconPath(),
+    })
+  } else {
+    Object.assign(options, {
+      frame: false,
+      icon: getIconPath(),
+    })
+  }
+
+  const win = new BrowserWindow(options)
 
   if (isDev) {
     win.loadURL('http://localhost:5173')
@@ -36,24 +66,24 @@ function createWindow(): BrowserWindow {
   }
 
   if (isDev) win.webContents.openDevTools()
+  win.once('ready-to-show', () => win.show())
   win.on('closed', () => { mainWindow = null })
   mainWindow = win
   return win
 }
 
 function createTray(win: BrowserWindow): Tray {
-  const iconPath = isDev
-    ? path.join(__dirname, '../../build/tray-icon.png')
-    : path.join(process.resourcesPath, 'tray-icon.png')
+  const iconFile = isMac ? 'tray-icon.png' : (isWin ? 'tray-icon.ico' : 'tray-icon.png')
+  const iconPath = path.join(process.resourcesPath, iconFile)
   const native = nativeImage.createFromPath(iconPath)
   const t = new Tray(native.isEmpty() ? nativeImage.createEmpty() : native)
   t.setToolTip('DSH Desktop')
   t.setContextMenu(Menu.buildFromTemplate([
     { label: 'Show', click: () => win.show() },
     { type: 'separator' },
-    { label: 'Settings', click: () => { win.show(); win.webContents.send('open-settings') } },
+    { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => { win.show(); win.webContents.send('open-settings') } },
     { type: 'separator' },
-    { label: 'Quit', click: () => { void quit() } },
+    { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => { void quit() } },
   ]))
   t.on('double-click', () => win.show())
   return t
@@ -71,47 +101,79 @@ app.whenReady().then(async () => {
   const win = createWindow()
   tray = createTray(win)
   registerIPC(mainWindow!, runtime, settings as any)
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {
-      label: 'DSH Desktop',
-      submenu: [
-        { label: 'About', click: () => dialog.showMessageBox(win, { message: 'DSH Desktop v0.1.0-rc.5', detail: 'Multi-platform desktop client for DeepSeek Harness' }) },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
-    {
-      label: 'File',
-      submenu: [
-        { label: 'New Session', accelerator: 'CmdOrCtrl+N', click: () => win.webContents.send('new-session') },
-        { type: 'separator' },
-        { role: 'close' },
-      ],
-    },
-    {
-      label: 'Edit',
-      submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: () => win.webContents.send('toggle-sidebar') },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { role: 'resetZoom' },
-      ],
-    },
-    {
-      label: 'Settings',
-      submenu: [
-        { label: 'Preferences', accelerator: 'CmdOrCtrl+,', click: () => win.webContents.send('open-settings') },
-      ],
-    },
-  ]))
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
+
+  // macOS: app menu is in the global menu bar
+  if (isMac) {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: 'DSH Desktop',
+        submenu: [
+          { label: 'About', role: 'about' },
+          { type: 'separator' },
+          { label: 'Preferences', accelerator: 'Cmd+,', click: () => win.webContents.send('open-settings') },
+          { type: 'separator' },
+          { role: 'services' },
+          { role: 'hide' },
+          { role: 'hideothers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      {
+        label: 'Window',
+        submenu: [
+          { label: 'New Session', accelerator: 'Cmd+N', click: () => win.webContents.send('new-session') },
+          { type: 'separator' },
+          { role: 'minimize' },
+          { role: 'zoom' },
+          { role: 'close' },
+        ],
+      },
+    ]))
+  } else {
+    // Win/Linux: app menu inside the window
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: 'File',
+        submenu: [
+          { label: 'New Session', accelerator: 'Ctrl+N', click: () => win.webContents.send('new-session') },
+          { type: 'separator' },
+          { role: 'close' },
+        ],
+      },
+      {
+        label: 'Edit',
+        submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }],
+      },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'toggleDevTools' },
+          { type: 'separator' },
+          { label: 'Toggle Sidebar', accelerator: 'Ctrl+B', click: () => win.webContents.send('toggle-sidebar') },
+          { role: 'zoomIn' },
+          { role: 'zoomOut' },
+          { role: 'resetZoom' },
+        ],
+      },
+      {
+        label: 'Settings',
+        submenu: [
+          { label: 'Preferences', accelerator: 'Ctrl+,', click: () => win.webContents.send('open-settings') },
+        ],
+      },
+    ]))
+  }
+
+  if (isMac) app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow() })
 })
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') void quit() })
+app.on('window-all-closed', () => {
+  // macOS: app stays alive until explicitly quit
+  if (!isMac) void quit()
+})
+
 app.on('before-quit', async () => { await runtime?.shutdown() })

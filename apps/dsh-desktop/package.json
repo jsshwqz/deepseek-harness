@@ -11,11 +11,11 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "start": "electron .",
     "pack:win": "electron-builder --win --config electron-builder.config.cjs",
     "pack:mac": "electron-builder --mac --config electron-builder.config.cjs",
     "pack:linux": "electron-builder --linux --config electron-builder.config.cjs",
-    "pack:all": "electron-builder --win --mac --linux --config electron-builder.config.cjs",
-    "start": "electron ."
+    "pack:all": "electron-builder --win --mac --linux --config electron-builder.config.cjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

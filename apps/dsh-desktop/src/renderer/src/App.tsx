@@ -25,24 +25,26 @@ export default function App() {
     prompt(activeSession.id, content.trim())
   }, [activeSession, prompt])
 
+  const handleFeedback = useCallback((_msgId: string, _kind: string) => {
+    // Feedback captured; runtime integration pending
+  }, [])
+
+  const handleRerun = useCallback((msgId: string) => {
+    if (!activeSession) return
+    prompt(activeSession.id, '/rerun ' + msgId)
+  }, [activeSession, prompt])
+
+  const handleFileAttach = useCallback((_files: File[]) => {
+    // Files queued for upload
+  }, [])
+
   useEffect(() => {
     if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
 
-  useEffect(() => {
-    const unsub = window.dsDesktop.app.onNewSession(handleNewSession)
-    return () => unsub()
-  }, [handleNewSession])
-
-  useEffect(() => {
-    const unsub = window.dsDesktop.app.onToggleSidebar(() => setSidebarVisible(v => !v))
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const unsub = window.dsDesktop.app.onOpenSettings(() => setShowSettings(true))
-    return () => unsub()
-  }, [])
+  useEffect(() => { const unsub = window.dsDesktop.app.onNewSession(handleNewSession); return () => unsub() }, [handleNewSession])
+  useEffect(() => { const unsub = window.dsDesktop.app.onToggleSidebar(() => setSidebarVisible(v => !v)); return () => unsub() }, [])
+  useEffect(() => { const unsub = window.dsDesktop.app.onOpenSettings(() => setShowSettings(true)); return () => unsub() }, [])
 
   return (
     <div className="app">
@@ -67,14 +69,15 @@ export default function App() {
         <ChatArea
           messages={messages}
           isLoading={isLoading}
-          response={response}
-          activeSession={activeSession}
+          onFeedback={handleFeedback}
+          onRerun={handleRerun}
         />
         <div ref={chatEndRef} />
         <Composer
           onSend={handlePrompt}
           disabled={isLoading || !activeSession}
-          placeholder={activeSession ? 'Type a message... (Cmd+Enter to send)' : 'Start a new session first'}
+          onFileAttach={handleFileAttach}
+          placeholder={activeSession ? 'Type a message... (Cmd+Enter to send, drag files to attach)' : 'Start a new session first'}
         />
         <StatusBar status={status} model={activeSession?.model ?? ''} />
       </div>
