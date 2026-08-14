@@ -1,8 +1,9 @@
-/* DSH Desktop (Tauri) - Rust main-process backend.
+/* DSH Desktop (Tauri) - Rust main-process backend. */
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
+use tokio::sync::Mutex as TMutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use uuid::Uuid;
@@ -11,8 +12,8 @@ use uuid::Uuid;
 struct RuntimeStatus { connected: bool, error: Option<String>, provider: String, model: String }
 
 struct AppContext {
-    stdin: Mutex<Option<ChildStdin>>,
-    child: Mutex<Option<Child>>,
+    stdin: TMutex<Option<ChildStdin>>,
+    child: TMutex<Option<Child>>,
     pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>>,
     status: Arc<Mutex<RuntimeStatus>>,
 }
@@ -29,13 +30,13 @@ struct PromptParams { session_id: String, content: String }
 #[derive(Serialize)]
 struct PromptResult { message_id: String }
 
-async fn rpc_req(stdin: &Mutex<Option<ChildStdin>>, pending: &Mutex<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+async fn rpc_req(stdin: &TMutex<Option<ChildStdin>>, pending: &Mutex<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
     let id = Uuid::new_v4().to_string();
     let req = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
     let (tx, rx) = tokio::sync::oneshot::channel();
     { let mut p = pending.lock().unwrap(); p.insert(id.clone(), tx); }
     {
-        let mut g = stdin.lock().unwrap();
+        let mut g = stdin.lock().await;
         let w = g.as_mut().ok_or("runtime not connected")?;
         let mut payload = req.to_string().into_bytes();
         payload.push(10);
@@ -47,7 +48,7 @@ async fn rpc_req(stdin: &Mutex<Option<ChildStdin>>, pending: &Mutex<HashMap<Stri
 #[tauri::command]
 async fn init_runtime(state: tauri::State<'_, AppContext>, app: tauri::AppHandle, params: InitParams) -> Result<RuntimeStatus, String> {
     {
-        let mut child = state.child.lock().unwrap();
+        let mut child = state.child.lock().await;
         if let Some(c) = child.as_mut() { let _ = c.kill().await; }
     }
     let mut cmd = Command::new("node");
@@ -61,12 +62,12 @@ async fn init_runtime(state: tauri::State<'_, AppContext>, app: tauri::AppHandle
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    let child = cmd.spawn().map_err(|e| e.to_string())?;
-    let mut stdin = child.stdin.take().unwrap();
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    *state.stdin.lock().unwrap() = Some(stdin);
-    { let mut c = state.child.lock().unwrap(); *c = Some(child); }
+    *state.stdin.lock().await = Some(stdin);
+    { let mut c = state.child.lock().await; *c = Some(child); }
     let app = app.clone();
     let pending = state.pending.clone();
     let status = state.status.clone();
@@ -85,7 +86,7 @@ async fn init_runtime(state: tauri::State<'_, AppContext>, app: tauri::AppHandle
                 if let Some(id) = v.get("id").and_then(|x| x.as_str()) {
                     if let Some(tx) = pending.lock().unwrap().remove(id) { let _ = tx.send(v); }
                 } else if let Some(m) = v.get("method").and_then(|x| x.as_str()) {
-                    let _ = app.emit_all(m, &v);
+                    let _ = app.emit(m, &v);
                 }
             }
         }
@@ -124,28 +125,27 @@ async fn send_prompt(state: tauri::State<'_, AppContext>, params: PromptParams) 
 }
 
 #[tauri::command]
-async fn get_status(state: tauri::State<'_, AppContext>) -> RuntimeStatus { state.status.lock().unwrap().clone() }
+async fn get_status(state: tauri::State<'_, AppContext>) -> Result<RuntimeStatus, String> { Ok(state.status.lock().unwrap().clone()) }
 
 #[tauri::command]
 async fn shutdown_runtime(state: tauri::State<'_, AppContext>) -> Result<(), String> {
     let _ = rpc_req(&state.stdin, &state.pending, "shutdown", serde_json::Value::Null).await;
-    { let mut child = state.child.lock().unwrap(); if let Some(c) = child.as_mut() { let _ = c.wait().await; } *child = None; }
-    *state.stdin.lock().unwrap() = None;
+    { let mut child = state.child.lock().await; if let Some(c) = child.as_mut() { let _ = c.wait().await; } *child = None; }
+    *state.stdin.lock().await = None;
     let mut st = state.status.lock().unwrap();
     st.connected = false; st.error = Some("shutdown".to_string());
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(AppContext{
-            stdin: Mutex::new(None), child: Mutex::new(None),
+            stdin: TMutex::new(None), child: TMutex::new(None),
             pending: Arc::new(Mutex::new(HashMap::new())),
             status: Arc::new(Mutex::new(RuntimeStatus::default())),
         })
-        .setup(|app| { let _ = app.handle().emit_all("runtime:ready", ""); Ok(()) })
+        .setup(|app| { let _ = app.handle().emit("runtime:ready", ""); Ok(()) })
         .invoke_handler(tauri::generate_handler![init_runtime, send_prompt, get_status, shutdown_runtime])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
