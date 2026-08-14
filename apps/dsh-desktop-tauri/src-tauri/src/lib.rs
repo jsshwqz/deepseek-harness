@@ -1,4 +1,4 @@
-﻿/* DSH Desktop (Tauri) — Rust main-process backend.
+/* DSH Desktop (Tauri) - Rust main-process backend.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,41 +29,30 @@ struct PromptParams { session_id: String, content: String }
 #[derive(Serialize)]
 struct PromptResult { message_id: String }
 
-async fn rpc_req(
-    stdin: &Option<ChildStdin>,
-    pending: &Mutex<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>,
-    method: &str, params: serde_json::Value,
-) -> Result<serde_json::Value, String> {
+async fn rpc_req(stdin: &Mutex<Option<ChildStdin>>, pending: &Mutex<HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>>, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
     let id = Uuid::new_v4().to_string();
     let req = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
     let (tx, rx) = tokio::sync::oneshot::channel();
     { let mut p = pending.lock().unwrap(); p.insert(id.clone(), tx); }
     {
-        let g = stdin.as_ref().ok_or("runtime not connected")?;
+        let mut g = stdin.lock().unwrap();
+        let w = g.as_mut().ok_or("runtime not connected")?;
         let mut payload = req.to_string().into_bytes();
         payload.push(10);
-        g.write_all(&payload).await.map_err(|e| e.to_string())?;
-        g.flush().await.map_err(|e| e.to_string())?;
+        w.write_all(&payload).await.map_err(|e| e.to_string())?;
+        w.flush().await.map_err(|e| e.to_string())?;
     }
     rx.await.map_err(|_| "request dropped".into())
 }
-
 #[tauri::command]
-async fn init_runtime(
-    state: tauri::State<'_, AppContext>,
-    app: tauri::AppHandle,
-    params: InitParams,
-) -> Result<RuntimeStatus, String> {
+async fn init_runtime(state: tauri::State<'_, AppContext>, app: tauri::AppHandle, params: InitParams) -> Result<RuntimeStatus, String> {
     {
         let mut child = state.child.lock().unwrap();
         if let Some(c) = child.as_mut() { let _ = c.kill().await; }
     }
     let mut cmd = Command::new("node");
     let mut args = vec!["--import".to_string(), "tsx/esm".to_string()];
-    args.push(params.runtime_path.as_ref().map_or_else(
-        || "../../packages/examples/jsonrpc-demo/src/bin.ts".to_string(),
-        |p| p.clone(),
-    ));
+    args.push(params.runtime_path.as_ref().map_or_else(|| "../../packages/examples/jsonrpc-demo/src/bin.ts".to_string(), |p| p.clone()));
     cmd.args(args);
     cmd.env("DSH_CWD", &params.cwd);
     if let Some(k) = &params.api_key { cmd.env("DEEPSEEK_API_KEY", k); }
@@ -118,44 +107,29 @@ async fn init_runtime(
     });
     let init_params = serde_json::json!({"cwd": params.cwd, "provider": params.provider, "model": params.model, "maxTokens": params.max_tokens});
     {
-        let mut s = state.stdin.lock().unwrap();
-        let _ = rpc_req(s.as_mut(), &state.pending, "initialize", init_params).await;
+        let _ = rpc_req(&state.stdin, &state.pending, "initialize", init_params).await;
     }
     let mut st = state.status.lock().unwrap();
     st.connected = true; st.error = None;
     st.provider = params.provider.clone(); st.model = params.model.clone();
     Ok(st.clone())
 }
-
 #[tauri::command]
 async fn send_prompt(state: tauri::State<'_, AppContext>, params: PromptParams) -> Result<PromptResult, String> {
-    let content_blocks = serde_json::json!([{"type":"text","text":params.content}]);
-    let p = serde_json::json!({"sessionId":params.session_id,"contentBlocks":content_blocks});
-    let resp = {
-        let mut s = state.stdin.lock().unwrap();
-        rpc_req(s.as_mut(), &state.pending, "session/prompt", p).await?
-    };
-    let msg_id = resp.get("result").and_then(|r| r.get("messageId"))
-        .and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let cb = serde_json::json!([{"type":"text","text":params.content}]);
+    let p = serde_json::json!({"sessionId":params.session_id,"contentBlocks":cb});
+    let resp = rpc_req(&state.stdin, &state.pending, "session/prompt", p).await?;
+    let msg_id = resp.get("result").and_then(|r| r.get("messageId")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     Ok(PromptResult{message_id: msg_id})
 }
 
 #[tauri::command]
-async fn get_status(state: tauri::State<'_, AppContext>) -> RuntimeStatus {
-    state.status.lock().unwrap().clone()
-}
+async fn get_status(state: tauri::State<'_, AppContext>) -> RuntimeStatus { state.status.lock().unwrap().clone() }
 
 #[tauri::command]
 async fn shutdown_runtime(state: tauri::State<'_, AppContext>) -> Result<(), String> {
-    {
-        let mut s = state.stdin.lock().unwrap();
-        let _ = rpc_req(s.as_mut(), &state.pending, "shutdown", serde_json::Value::Null).await;
-    }
-    {
-        let mut child = state.child.lock().unwrap();
-        if let Some(c) = child.as_mut() { let _ = c.wait().await; }
-        *child = None;
-    }
+    let _ = rpc_req(&state.stdin, &state.pending, "shutdown", serde_json::Value::Null).await;
+    { let mut child = state.child.lock().unwrap(); if let Some(c) = child.as_mut() { let _ = c.wait().await; } *child = None; }
     *state.stdin.lock().unwrap() = None;
     let mut st = state.status.lock().unwrap();
     st.connected = false; st.error = Some("shutdown".to_string());
